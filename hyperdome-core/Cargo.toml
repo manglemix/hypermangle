@@ -1,0 +1,27 @@
+[package]
+name = "hyperdome-core"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+pyo3 = { "version" = "0.19.*", features = ["auto-initialize"] }
+fxhash = "0.2.*"
+tower = "0.4.*"
+tower-http = { version = "0.4.*", features = ["cors", "compression-gzip", "compression-br", "trace", "auth"] }
+constant_time_eq = "0.3.*"
+regex = "1.9.*"
+serde = { version = "1.0.*", features = ["derive"]}
+toml = "0.7.*"
+notify = { version = "6.0.*", optional = true, default-features = false, features = ["macos_kqueue"] }
+fern = "0.6.*"
+axum = { workspace = true }
+log = { workspace = true }
+pyo3-asyncio = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+hyperdome-py = { path = "../hyperdome-py" }
+
+[features]
+hot-reload = ["notify"]

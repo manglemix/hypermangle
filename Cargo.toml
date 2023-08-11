@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "hyperdome-dev",
+    "hyperdome-py",
+]
+
+[workspace.dependencies]
+# anyhow = "*"
+
+axum = { "version" = "0.6.*", features = ["macros", "ws"] }
+log = "0.4.*"
+pyo3-asyncio = { version = "0.19.*", features = ["tokio-runtime"] }
+parking_lot = "0.12.*"
+tokio = { version = "1.30.*", features = ["rt-multi-thread", "macros"] }
+
+# serde = { version = "1.0.151", features = ["derive"] }
+# derive_more = "0.99.16"
+# thiserror = "*"
+# negative-impl = "0.1.3"
+
+[profile.release]
+lto = true
