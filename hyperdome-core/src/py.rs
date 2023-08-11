@@ -5,16 +5,15 @@ use std::{
 };
 
 use axum::{
-    body::Bytes, extract::WebSocketUpgrade, http::StatusCode, response::{IntoResponse, Response}, routing::get,
+    body::Bytes,
+    extract::WebSocketUpgrade,
+    http::StatusCode,
+    response::{IntoResponse, Response},
     Router,
 };
 use fxhash::FxHashMap;
 use parking_lot::RwLock;
-use pyo3::{
-    intern,
-    types::PyModule,
-    PyObject, Python, ToPyObject,
-};
+use pyo3::{intern, types::PyModule, PyObject, Python, ToPyObject};
 
 use crate::u16_to_status;
 
@@ -98,14 +97,23 @@ fn load_py_handlers(path: &Path) -> Option<PyHandlers> {
     })
 }
 
-fn pyobject_to_response(py: Python, obj: PyObject, handler: &str) -> Response {
+fn pyobject_to_response<'a>(py: Python<'a>, obj: PyObject, handler: &str) -> Response {
     if let Ok((code, bytes)) = obj.extract::<(u16, Vec<u8>)>(py) {
         (
-            u16_to_status(code, || format!("{handler} should return a valid status code, not {code}")),
-            bytes
-        ).into_response()
+            u16_to_status(code, || {
+                format!("{handler} should return a valid status code, not {code}")
+            }),
+            bytes,
+        )
+            .into_response()
     } else if let Ok((code, string)) = obj.extract::<(u16, String)>(py) {
-        (u16_to_status(code, || format!("{handler} should return a valid status code, not {code}")), string).into_response()
+        (
+            u16_to_status(code, || {
+                format!("{handler} should return a valid status code, not {code}")
+            }),
+            string,
+        )
+            .into_response()
     } else {
         panic!("{handler} should return a tuple: (Status Code, string/bytes), not: {obj}")
     }
@@ -132,18 +140,21 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
     #[cfg(feature = "hot-reload")]
     {
         macro_rules! handler {
-            ($method: ident) => {
+            ($method: ident, $handler: literal) => {
                 if py_handlers.$method.is_some() {
                     let path = path.to_owned();
-                    router = router.route(&http_path, axum::routing::get(
-                        move |body: Bytes| async move {
-                            Python::with_gil(|py| {
+                    router = router.route(
+                        &http_path,
+                        axum::routing::get(move |body: Bytes| async move {
+                            let exception_msg =
+                                format!("{} should have ran without exceptions", $handler);
+                            let result = Python::with_gil(|py| {
                                 let body = if let Ok(body) = std::str::from_utf8(&body) {
                                     body.to_object(py)
                                 } else {
                                     body.to_object(py)
                                 };
-        
+
                                 let result = PY_HANDLERS
                                     .get()
                                     .unwrap()
@@ -154,26 +165,33 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
                                     .as_ref()
                                     .unwrap()
                                     .call1(py, (body,))
-                                    .expect("get_handler should have ran without exceptions");
-        
-                                pyobject_to_response(py, result, "get_handler")
+                                    .expect(&exception_msg);
+
+                                pyo3_asyncio::tokio::into_future(result.as_ref(py))
+                                    .expect(&format!("{} should be asynchronous", $handler))
                             })
-                        }
-                    ));
+                            .await
+                            .expect(&exception_msg);
+
+                            Python::with_gil(|py| pyobject_to_response(py, result, $handler))
+                        }),
+                    );
                 }
             };
         }
 
-        handler!(get);
-        handler!(post);
+        handler!(get, "get_handler");
+        handler!(post, "post_handler");
 
-        
         if py_handlers.ws.is_some() {
             let path = path.to_owned();
-            router = router.route(&http_path, axum::routing::get(
-                move |ws: WebSocketUpgrade| async move {
+            router = router.route(
+                &http_path,
+                axum::routing::get(|ws: WebSocketUpgrade| async move {
                     Python::with_gil(|py| {
-                        let result = PY_HANDLERS
+                        let (ws, receiver) = hyperdome_py::WebSocket::new(ws);
+
+                        PY_HANDLERS
                             .get()
                             .unwrap()
                             .read()
@@ -182,17 +200,15 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
                             .ws
                             .as_ref()
                             .unwrap()
-                            .call1(py, ())
+                            .call1(py, (ws,))
                             .expect("ws_handler should have ran without exceptions");
 
-                        if result.is_none(py) {
-                            ws.on_upgrade(|ws| {
-                                
-                            })
-                        }
+                        receiver
                     })
-                }
-            ));
+                    .await
+                    .unwrap_or_else(|_| (StatusCode::SERVICE_UNAVAILABLE, ()).into_response())
+                }),
+            );
         }
 
         PY_HANDLERS
@@ -223,22 +239,28 @@ pub(crate) fn py_handle_notify_event(event: &notify::Event) {
                     if let Some(old_get) = &mut py_handler.get {
                         *old_get = new_get;
                     } else {
-                        warn!("get_handler has been removed from {path:?}, but the server must be restarted for this change to be reflected");
+                        warn!("get_handler has been added to {path:?}, but the server must be restarted for this change to be reflected");
                     }
+                } else if new_py_handler.get.is_some() {
+                    warn!("get_handler has been removed from {path:?}, but the server must be restarted for this change to be reflected");
                 }
                 if let Some(new_post) = new_py_handler.post {
                     if let Some(old_post) = &mut py_handler.post {
                         *old_post = new_post;
                     } else {
-                        warn!("post_handler has been removed from {path:?}, but the server must be restarted for this change to be reflected");
+                        warn!("post_handler has been added to {path:?}, but the server must be restarted for this change to be reflected");
                     }
+                } else if new_py_handler.post.is_some() {
+                    warn!("post_handler has been removed from {path:?}, but the server must be restarted for this change to be reflected");
                 }
                 if let Some(new_ws) = new_py_handler.ws {
                     if let Some(old_ws) = &mut py_handler.ws {
                         *old_ws = new_ws;
                     } else {
-                        warn!("ws_handler has been removed from {path:?}, but the server must be restarted for this change to be reflected");
+                        warn!("ws_handler has been added to {path:?}, but the server must be restarted for this change to be reflected");
                     }
+                } else if new_py_handler.ws.is_some() {
+                    warn!("ws_handler has been removed from {path:?}, but the server must be restarted for this change to be reflected");
                 }
             });
     }

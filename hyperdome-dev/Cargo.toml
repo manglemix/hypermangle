@@ -6,5 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hyperdome-core = { "path" = "../hyperdome-core" }
+hyperdome-core = { "path" = "../hyperdome-core", features = ["hot-reload"]}
 hyperdome-api = { "path" = "../hyperdome-api" }
+fern = "0.6.*"
+clap = "0.6.*"

@@ -15,13 +15,13 @@ regex = "1.9.*"
 serde = { version = "1.0.*", features = ["derive"]}
 toml = "0.7.*"
 notify = { version = "6.0.*", optional = true, default-features = false, features = ["macos_kqueue"] }
-fern = "0.6.*"
 axum = { workspace = true }
 log = { workspace = true }
 pyo3-asyncio = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true }
 hyperdome-py = { path = "../hyperdome-py" }
+hyperdome-api = { path = "../hyperdome-api" }
 
 [features]
 hot-reload = ["notify"]
