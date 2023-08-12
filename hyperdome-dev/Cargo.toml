@@ -8,5 +8,10 @@ edition = "2021"
 [dependencies]
 hyperdome-core = { "path" = "../hyperdome-core", features = ["hot-reload"]}
 hyperdome-api = { "path" = "../hyperdome-api" }
-fern = "0.6.*"
-clap = "0.6.*"
+clap = { version = "4.3.*", features = ["derive"] }
+log = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+pyo3-asyncio = { workspace = true }
+pyo3 = { "version" = "0.19.*" }

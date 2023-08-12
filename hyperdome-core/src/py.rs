@@ -15,7 +15,7 @@ use fxhash::FxHashMap;
 use parking_lot::RwLock;
 use pyo3::{intern, types::PyModule, PyObject, Python, ToPyObject};
 
-use crate::u16_to_status;
+use crate::{u16_to_status, PY_TASK_LOCALS};
 
 // #[cfg(feature = "hot-reload")]
 #[derive(Default, Clone)]
@@ -76,7 +76,7 @@ fn load_py_handlers(path: &Path) -> Option<PyHandlers> {
                     .expect("get_handler should be accessible since it exists")
                     .to_object(py)
             });
-            let post = has_get.then(|| {
+            let post = has_post.then(|| {
                 module
                     .getattr(post_name)
                     .expect("post_handler should be accessible since it exists")
@@ -125,10 +125,19 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
     };
 
     let http_path = {
-        let path = path
+        let mut components = path.components();
+        // Skip over scripts folder
+        components.next();
+
+        let mut path = components
+            .as_path()
+            .parent()
+            .unwrap()
             .to_str()
             .expect("Path to scripts should be valid unicode")
             .to_owned();
+
+        path = String::from("/") + &path;
 
         if py_handlers.is_multi_pathed {
             path + "*"
@@ -167,8 +176,11 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
                                     .call1(py, (body,))
                                     .expect(&exception_msg);
 
-                                pyo3_asyncio::tokio::into_future(result.as_ref(py))
-                                    .expect(&format!("{} should be asynchronous", $handler))
+                                pyo3_asyncio::into_future_with_locals(
+                                    PY_TASK_LOCALS.get().unwrap(),
+                                    result.as_ref(py),
+                                )
+                                .expect(&format!("{} should be asynchronous", $handler))
                             })
                             .await
                             .expect(&exception_msg);
@@ -188,25 +200,27 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
             router = router.route(
                 &http_path,
                 axum::routing::get(|ws: WebSocketUpgrade| async move {
-                    Python::with_gil(|py| {
-                        let (ws, receiver) = hyperdome_py::WebSocket::new(ws);
+                    let (ws, receiver) = hyperdome_py::WebSocket::new(ws);
 
-                        PY_HANDLERS
-                            .get()
-                            .unwrap()
-                            .read()
-                            .get(&path)
-                            .unwrap()
-                            .ws
-                            .as_ref()
-                            .unwrap()
-                            .call1(py, (ws,))
-                            .expect("ws_handler should have ran without exceptions");
+                    tokio::task::spawn_blocking(move || {
+                        Python::with_gil(|py| {
+                            PY_HANDLERS
+                                .get()
+                                .unwrap()
+                                .read()
+                                .get(&path)
+                                .unwrap()
+                                .ws
+                                .as_ref()
+                                .unwrap()
+                                .call1(py, (ws,))
+                                .expect("ws_handler should have ran without exceptions");
+                        })
+                    });
 
-                        receiver
-                    })
-                    .await
-                    .unwrap_or_else(|_| (StatusCode::SERVICE_UNAVAILABLE, ()).into_response())
+                    receiver
+                        .await
+                        .unwrap_or_else(|_| (StatusCode::SERVICE_UNAVAILABLE, ()).into_response())
                 }),
             );
         }

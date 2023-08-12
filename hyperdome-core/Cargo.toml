@@ -7,21 +7,30 @@ edition = "2021"
 
 [dependencies]
 pyo3 = { "version" = "0.19.*", features = ["auto-initialize"] }
+pyo3-asyncio = { workspace = true }
+
 fxhash = "0.2.*"
+
+axum = { workspace = true }
 tower = "0.4.*"
 tower-http = { version = "0.4.*", features = ["cors", "compression-gzip", "compression-br", "trace", "auth"] }
+
 constant_time_eq = "0.3.*"
 regex = "1.9.*"
-serde = { version = "1.0.*", features = ["derive"]}
-toml = "0.7.*"
 notify = { version = "6.0.*", optional = true, default-features = false, features = ["macos_kqueue"] }
-axum = { workspace = true }
-log = { workspace = true }
-pyo3-asyncio = { workspace = true }
+
 parking_lot = { workspace = true }
 tokio = { workspace = true }
+
+toml = { workspace = true }
+serde = { workspace = true}
+
 hyperdome-py = { path = "../hyperdome-py" }
 hyperdome-api = { path = "../hyperdome-api" }
+
+fern = "0.6.*"
+humantime = "2.1.*"
+log = { workspace = true }
 
 [features]
 hot-reload = ["notify"]

@@ -9,9 +9,11 @@ members = [
 
 axum = { "version" = "0.6.*", features = ["macros", "ws"] }
 log = "0.4.*"
-pyo3-asyncio = { version = "0.19.*", features = ["tokio-runtime"] }
+pyo3-asyncio = { version = "0.19.*", features = ["tokio-runtime", "attributes"] }
 parking_lot = "0.12.*"
-tokio = { version = "1.30.*", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.30.*", features = ["rt-multi-thread"] }
+toml = "0.7.*"
+serde = { version = "1.0.*", features = ["derive"]}
 
 # serde = { version = "1.0.151", features = ["derive"] }
 # derive_more = "0.99.16"
