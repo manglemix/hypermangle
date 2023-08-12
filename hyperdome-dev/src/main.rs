@@ -1,6 +1,6 @@
 use std::fs::{create_dir_all, read_to_string};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use axum::Router;
 use hyperdome_core::{async_run_router, load_scripts_into_router, setup_logger, HyperDomeConfig};
@@ -8,6 +8,7 @@ use hyperdome_core::{async_run_router, load_scripts_into_router, setup_logger, H
 use clap::{self, Parser, Subcommand};
 use log::warn;
 use pyo3::PyResult;
+use pyo3_asyncio::tokio::re_exports::runtime::Handle;
 use serde::Deserialize;
 
 const CACHE_NAME: &str = ".hyperdome";
@@ -55,7 +56,7 @@ hyperdome-api = {{ \"path\" = \"../hyperdome/hyperdome-api\" }}
         path.to_str().unwrap()
     );
 
-    std::fs::write(path.join("/Cargo.toml"), toml).expect("Cargo.toml should be writable");
+    std::fs::write(path.join("Cargo.toml"), toml).expect("Cargo.toml should be writable");
 }
 
 #[derive(Deserialize)]
@@ -72,24 +73,33 @@ struct CargoConfig {
 fn static_link_project(path: &Path, _preset: String) {
     make_cache();
     let cargo_config =
-        read_to_string(path.join("/Cargo.toml")).expect("Cargo.toml should be readable");
+        read_to_string(path.join("Cargo.toml")).expect("Cargo.toml should be readable");
     let cargo_config: CargoConfig = toml::from_str(&cargo_config)
         .expect("Cargo.toml should be a valid cargo configuration file");
 
-    let cache_proj_path = Path::new(CACHE_NAME)
-        .join("/")
-        .join(&cargo_config.package.name);
+    let cache_proj_path = Path::new(CACHE_NAME).join(&cargo_config.package.name);
+
+    let mut git_cmd = Command::new("git");
+    if Path::new(CACHE_NAME).join("hyperdome").exists() {
+        git_cmd
+            .arg("pull")
+            .current_dir(Path::new(CACHE_NAME).join("hyperdome"));
+    } else {
+        git_cmd
+            .args(["clone", "--depth", "1", GIT_REPO_URL])
+            .current_dir(CACHE_NAME);
+    }
+    git_cmd
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .output()
+        .expect("git should be installed and accessible");
 
     if cache_proj_path.exists() {
-        Command::new("git")
-            .arg("pull")
-            .current_dir(Path::new(CACHE_NAME).join("/hyperdome"))
-            .output()
-            .expect("git should be installed and accessible");
     } else {
-        let src_path = cache_proj_path.join(Path::new("/src"));
+        let src_path = cache_proj_path.join(Path::new("src"));
         create_dir_all(&src_path).expect(&format!("{src_path:?} should be creatable"));
-        std::fs::write(src_path.join("/main.rs"), BOILERPLATE_RS)
+        std::fs::write(src_path.join("main.rs"), BOILERPLATE_RS)
             .expect("Creation or main.rs should be successful");
 
         create_cache_project_toml(
@@ -97,17 +107,13 @@ fn static_link_project(path: &Path, _preset: String) {
             &cargo_config.package.version,
             &cargo_config.package.name,
         );
-
-        Command::new("git")
-            .args(["--depth", "1", "clone", GIT_REPO_URL])
-            .current_dir(CACHE_NAME)
-            .output()
-            .expect("git should be installed and accessible");
     }
 
     Command::new("cargo")
         .arg("build")
         .current_dir(cache_proj_path)
+        .stderr(Stdio::inherit())
+        .stdout(Stdio::inherit())
         .output()
         .expect("cargo should be installed and accessible");
 }
@@ -124,8 +130,9 @@ fn try_build_rust_project(preset: String) -> bool {
         if !file_type.is_dir() {
             continue;
         }
+
         let path = entry.path();
-        if path.join("/Cargo.toml").exists() {
+        if path.join("Cargo.toml").exists() {
             static_link_project(&path, preset);
             return true;
         }
@@ -154,7 +161,7 @@ async fn main() -> PyResult<()> {
             } else {
                 let config = HyperDomeConfig::from_toml_file("hyperdome.toml".as_ref());
                 async_run_router(
-                    load_scripts_into_router(Router::new(), "scripts".as_ref()),
+                    load_scripts_into_router(Router::new(), "scripts".as_ref(), Handle::current()),
                     config,
                 )
                 .await;

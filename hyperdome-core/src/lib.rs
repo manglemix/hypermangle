@@ -2,16 +2,23 @@
 #![feature(result_flattening)]
 
 use std::{
-    ffi::OsStr, fs::read_to_string, net::SocketAddr, path::Path, sync::OnceLock, time::SystemTime,
+    ffi::OsStr,
+    fs::read_to_string,
+    net::SocketAddr,
+    path::Path,
+    sync::{Arc, OnceLock},
+    time::SystemTime,
 };
 
 use axum::{http::StatusCode, Router};
 use bearer::BearerAuth;
 use log::error;
+use notify::Watcher;
 use py::load_py_into_router;
 use pyo3_asyncio::TaskLocals;
 use regex::RegexSet;
 use serde::Deserialize;
+use tokio::runtime::Handle;
 use tower::ServiceBuilder;
 use tower_http::{
     auth::AsyncRequireAuthorizationLayer, compression::CompressionLayer, cors::CorsLayer,
@@ -22,21 +29,32 @@ mod bearer;
 mod py;
 
 #[cfg(feature = "hot-reload")]
-static FILE_WATCHER: OnceLock<notify::RecommendedWatcher> = OnceLock::new();
+const SYNC_CHANGES_DELAY: std::time::Duration = std::time::Duration::from_millis(1000);
 
 static PY_TASK_LOCALS: OnceLock<TaskLocals> = OnceLock::new();
 
-pub fn load_scripts_into_router(mut router: Router, path: &Path) -> Router {
+pub fn load_scripts_into_router(mut router: Router, path: &Path, async_runtime: Handle) -> Router {
     #[cfg(feature = "hot-reload")]
-    let _ = FILE_WATCHER.set(
-        notify::recommended_watcher(|res| match res {
-            Ok(event) => {
-                py::py_handle_notify_event(&event);
-            }
-            Err(event) => error!("File Watcher Error: {event:?}"),
-        })
-        .expect("Filesystem notification should be available"),
-    );
+    {
+        let async_runtime = async_runtime.clone();
+        let working_dir = path.canonicalize().unwrap().parent().unwrap().to_owned();
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
+                Ok(event) => {
+                    let _guard = async_runtime.enter();
+                    let event = Arc::new(event);
+                    py::py_handle_notify_event(event.clone(), working_dir.clone());
+                }
+                Err(event) => error!("File Watcher Error: {event:?}"),
+            })
+            .expect("Filesystem notification should be available");
+
+        watcher
+            .watch(path, notify::RecursiveMode::Recursive)
+            .expect("Scripts folder should be watchable");
+
+        Box::leak(Box::new(watcher));
+    }
 
     for result in path
         .read_dir()
@@ -49,7 +67,7 @@ pub fn load_scripts_into_router(mut router: Router, path: &Path) -> Router {
             .expect("File type of script or sub-directory should be accessible");
 
         if file_type.is_dir() {
-            router = load_scripts_into_router(router, &path);
+            router = load_scripts_into_router(router, &path, async_runtime.clone());
         } else if file_type.is_file() {
             match path.extension().map(OsStr::to_str).flatten() {
                 Some("py") => router = load_py_into_router(router, &path),
@@ -79,22 +97,6 @@ pub fn setup_logger() {
         .apply()
         .expect("Logger should initialize successfully");
 }
-
-// #[pyo3_asyncio::tokio::main(flavor = "multi_thread")]
-// pub fn run_router(router: Router, config: HyperDomeConfig) {
-//     let mut builder = tokio::runtime::Builder::new_multi_thread();
-//     builder.enable_all();
-//     pyo3_asyncio::tokio::init(builder);
-//     PY_TASK_LOCALS.set(pyo3::Python::with_gil(|py| pyo3_asyncio::tokio::get_current_locals(py)).unwrap()).unwrap();
-//     // pyo3::Python::with_gil(|py| {
-//     //     let asyncio = py.import("asyncio").unwrap();
-//     //     let event_loop = asyncio.call_method0("new_event_loop").expect("Python asyncio.new_event_loop should have ran without error");
-//     //     // asyncio.call_method1("set_event_loop", (event_loop,)).expect("Python asyncio.set_event_loop should have ran without error");
-//     //     PY_TASK_LOCALS.set(TaskLocals::new(event_loop)).unwrap();
-//     // });
-//     pyo3_asyncio::tokio::get_runtime().
-//         block_on(async_run_router(router, config));
-// }
 
 #[inline]
 fn u16_to_status(code: u16, f: impl Fn() -> String) -> StatusCode {
