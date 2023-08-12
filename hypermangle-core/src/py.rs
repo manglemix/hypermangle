@@ -215,7 +215,7 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
             router = router.route(
                 &http_path,
                 axum::routing::get(|ws: WebSocketUpgrade| async move {
-                    let (ws, receiver) = hyperdome_py::WebSocket::new(ws);
+                    let (ws, receiver) = hypermangle_py::WebSocket::new(ws);
 
                     tokio::task::spawn_blocking(move || {
                         Python::with_gil(|py| {

@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use axum::Router;
-use hyperdome_core::{async_run_router, load_scripts_into_router, setup_logger, HyperDomeConfig};
+use hypermangle_core::{async_run_router, load_scripts_into_router, setup_logger, HyperDomeConfig};
 
 use clap::{self, Parser, Subcommand};
 use log::warn;
@@ -11,8 +11,8 @@ use pyo3::PyResult;
 use pyo3_asyncio::tokio::re_exports::runtime::Handle;
 use serde::Deserialize;
 
-const CACHE_NAME: &str = ".hyperdome";
-const GIT_REPO_URL: &str = "https://github.com/manglemix/hyperdome.git";
+const CACHE_NAME: &str = ".hypermangle";
+const GIT_REPO_URL: &str = "https://github.com/manglemix/hypermangle.git";
 const BOILERPLATE_RS: &str = include_str!("boilerplate.rs");
 
 /// HTTP Server scripted with python
@@ -50,8 +50,8 @@ version = \"{version}\"
 edition = \"2021\"
 
 [dependencies]
-hyperdome-core = {{ \"path\" = \"../hyperdome/hyperdome-core\" }}
-hyperdome-api = {{ \"path\" = \"../hyperdome/hyperdome-api\" }}
+hypermangle-core = {{ \"path\" = \"../hypermangle/hypermangle-core\" }}
+hypermangle-api = {{ \"path\" = \"../hypermangle/hypermangle-api\" }}
 {project_name} = {{ \"path\" = \"../../{}\" }}
 ",
         path.to_str().unwrap()
@@ -81,10 +81,10 @@ fn static_link_project(path: &Path, _preset: String) {
     let cache_proj_path = Path::new(CACHE_NAME).join(&cargo_config.package.name);
 
     let mut git_cmd = Command::new("git");
-    if Path::new(CACHE_NAME).join("hyperdome").exists() {
+    if Path::new(CACHE_NAME).join("hypermangle").exists() {
         git_cmd
             .arg("pull")
-            .current_dir(Path::new(CACHE_NAME).join("hyperdome"));
+            .current_dir(Path::new(CACHE_NAME).join("hypermangle"));
     } else {
         git_cmd
             .args(["clone", "--depth", "1", GIT_REPO_URL])
@@ -159,7 +159,7 @@ async fn main() -> PyResult<()> {
             } else if !Path::new("scripts").exists() {
                 warn!("There is no scripts folder nor rust project to run!");
             } else {
-                let config = HyperDomeConfig::from_toml_file("hyperdome.toml".as_ref());
+                let config = HyperDomeConfig::from_toml_file("hypermangle.toml".as_ref());
                 async_run_router(
                     load_scripts_into_router(Router::new(), "scripts".as_ref(), Handle::current()),
                     config,

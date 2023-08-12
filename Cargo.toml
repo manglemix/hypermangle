@@ -1,7 +1,7 @@
 [workspace]
 members = [
-    "hyperdome-dev",
-    "hyperdome-py",
+    "hypermangle-dev",
+    "hypermangle-py",
 ]
 
 [workspace.dependencies]
