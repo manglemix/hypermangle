@@ -27,6 +27,7 @@ struct Args {
 enum Commands {
     Build { preset: Option<String> },
     Run,
+    Clean
 }
 
 fn make_cache() {
@@ -49,7 +50,7 @@ version = \"{version}\"
 edition = \"2021\"
 
 [dependencies]
-hyperdome-core = {{ \"path\" = \"../hyperdome/hyperdome-core\"]}}
+hyperdome-core = {{ \"path\" = \"../hyperdome/hyperdome-core\" }}
 hyperdome-api = {{ \"path\" = \"../hyperdome/hyperdome-api\" }}
 {project_name} = {{ \"path\" = \"../../{}\" }}
 ",
@@ -95,8 +96,7 @@ fn static_link_project(path: &Path, _preset: String) {
         .output()
         .expect("git should be installed and accessible");
 
-    if cache_proj_path.exists() {
-    } else {
+    if !cache_proj_path.exists() {
         let src_path = cache_proj_path.join(Path::new("src"));
         create_dir_all(&src_path).expect(&format!("{src_path:?} should be creatable"));
         std::fs::write(src_path.join("main.rs"), BOILERPLATE_RS)
@@ -166,6 +166,9 @@ async fn main() -> PyResult<()> {
                 )
                 .await;
             }
+        }
+        Commands::Clean => if Path::new(CACHE_NAME).exists() {
+            std::fs::remove_dir_all(CACHE_NAME).expect(&format!("Removal of {CACHE_NAME} should have succeeded"))
         }
     };
 
