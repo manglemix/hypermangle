@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 const CACHE_NAME: &str = ".hypermangle";
 const GIT_REPO_URL: &str = "https://github.com/manglemix/hypermangle.git";
-const BOILERPLATE_RS: &str = include_str!("boilerplate.rs");
+// const BOILERPLATE_RS: &str = include_str!("boilerplate.rs");
 
 /// HTTP Server scripted with python
 #[derive(Parser, Debug)]
@@ -60,6 +60,29 @@ hypermangle-api = {{ \"path\" = \"../hypermangle/hypermangle-api\" }}
     std::fs::write(path.join("Cargo.toml"), toml).expect("Cargo.toml should be writable");
 }
 
+fn create_main_rs(path: &Path, project_name: &str) {
+    let main = format!("
+use hypermangle_core::HyperDomeConfig;
+use hypermangle_api::HyperDomeAPI;
+use {}::inject_into_api;
+
+
+#[pyo3_asyncio::tokio::main(flavor = \"multi_thread\")]
+async fn main() {{
+    let api = inject_into_api(HyperDomeAPI::new());
+    let (router) = api.destructure();
+    let config = HyperDomeConfig::from_toml_file(\"hypermangle.toml\".as_ref());
+    async_run_router(
+        load_scripts_into_router(router, \"scripts\".as_ref(), Handle::current()),
+        config,
+    )
+    .await;
+}}
+", project_name);
+
+    std::fs::write(path.join("main.rs"), main).expect("main.rs should be writable");
+}
+
 #[derive(Deserialize)]
 struct PackageInfo {
     name: String,
@@ -70,6 +93,7 @@ struct PackageInfo {
 struct CargoConfig {
     package: PackageInfo,
 }
+
 
 #[inline]
 fn static_link_project(path: &Path, _preset: String) {
@@ -101,8 +125,7 @@ fn static_link_project(path: &Path, _preset: String) {
     if !cache_proj_path.exists() {
         let src_path = cache_proj_path.join(Path::new("src"));
         create_dir_all(&src_path).expect(&format!("{src_path:?} should be creatable"));
-        std::fs::write(src_path.join("main.rs"), BOILERPLATE_RS)
-            .expect("Creation or main.rs should be successful");
+        create_main_rs(&src_path, &cargo_config.package.name);
 
         create_cache_project_toml(
             &cache_proj_path,

@@ -1,6 +1,6 @@
-use axum::{body::HttpBody, Router};
+use axum::{body::Body, Router};
 
-pub struct HyperDomeAPI<S, B> {
+pub struct HyperDomeAPI<S = (), B = Body> {
     router: Router<S, B>,
 }
 
@@ -19,10 +19,7 @@ impl<S, B> HyperDomeAPI<S, B> {
     }
 }
 
-impl<S, B> HyperDomeAPI<S, B>
-where
-    B: HttpBody + Send + 'static,
-    S: Clone + Send + Sync + 'static,
+impl HyperDomeAPI
 {
     pub fn new() -> Self {
         Self {
