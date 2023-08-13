@@ -13,7 +13,6 @@ use std::{
 use axum::{http::StatusCode, Router};
 use bearer::BearerAuth;
 use log::error;
-use notify::Watcher;
 use py::load_py_into_router;
 use pyo3_asyncio::TaskLocals;
 use regex::RegexSet;
@@ -36,6 +35,7 @@ static PY_TASK_LOCALS: OnceLock<TaskLocals> = OnceLock::new();
 pub fn load_scripts_into_router(mut router: Router, path: &Path, async_runtime: Handle) -> Router {
     #[cfg(feature = "hot-reload")]
     {
+        use notify::Watcher;
         let async_runtime = async_runtime.clone();
         let working_dir = path.canonicalize().unwrap().parent().unwrap().to_owned();
         let mut watcher =

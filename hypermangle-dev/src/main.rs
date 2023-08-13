@@ -30,6 +30,7 @@ enum Commands {
     Clean
 }
 
+#[inline]
 fn make_cache() {
     let path = Path::new(CACHE_NAME);
     if path.exists() {
@@ -41,21 +42,20 @@ fn make_cache() {
     }
 }
 
-fn create_cache_project_toml(path: &Path, version: &str, project_name: &str) {
+#[inline]
+fn create_cache_project_toml(path: &Path, version: &str, project_name: &str, new_project_name: &str) {
     let toml = format!(
         "
 [package]
-name = \"{project_name}\"
+name = \"{new_project_name}\"
 version = \"{version}\"
 edition = \"2021\"
 
 [dependencies]
 hypermangle-core = {{ \"path\" = \"../hypermangle/hypermangle-core\" }}
 hypermangle-api = {{ \"path\" = \"../hypermangle/hypermangle-api\" }}
-{project_name} = {{ \"path\" = \"../../{}\" }}
-",
-        path.to_str().unwrap()
-    );
+{project_name} = {{ \"path\" = \"../../{project_name}\" }}
+");
 
     std::fs::write(path.join("Cargo.toml"), toml).expect("Cargo.toml should be writable");
 }
@@ -71,6 +71,7 @@ struct CargoConfig {
     package: PackageInfo,
 }
 
+#[inline]
 fn static_link_project(path: &Path, _preset: String) {
     make_cache();
     let cargo_config =
@@ -78,7 +79,8 @@ fn static_link_project(path: &Path, _preset: String) {
     let cargo_config: CargoConfig = toml::from_str(&cargo_config)
         .expect("Cargo.toml should be a valid cargo configuration file");
 
-    let cache_proj_path = Path::new(CACHE_NAME).join(&cargo_config.package.name);
+    let cache_proj_name = format!("{}_X_hypermangle", cargo_config.package.name);
+    let cache_proj_path = Path::new(CACHE_NAME).join(&cache_proj_name);
 
     let mut git_cmd = Command::new("git");
     if Path::new(CACHE_NAME).join("hypermangle").exists() {
@@ -106,6 +108,7 @@ fn static_link_project(path: &Path, _preset: String) {
             &cache_proj_path,
             &cargo_config.package.version,
             &cargo_config.package.name,
+            &cache_proj_name
         );
     }
 
@@ -118,6 +121,7 @@ fn static_link_project(path: &Path, _preset: String) {
         .expect("cargo should be installed and accessible");
 }
 
+#[inline]
 fn try_build_rust_project(preset: String) -> bool {
     for entry in Path::new(".")
         .read_dir()
