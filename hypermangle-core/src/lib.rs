@@ -24,7 +24,8 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-pub use pyo3_asyncio::tokio::main as hypermangle_main;
+pub use pyo3_asyncio::{self, tokio::main as hypermangle_main};
+pub use pyo3::{self, PyResult};
 
 mod bearer;
 mod py;
@@ -173,6 +174,7 @@ pub async fn async_run_router(mut router: Router, config: HyperDomeConfig) {
 
 pub async fn auto_main(router: impl FnOnce(Router) -> Router) {
     let config = HyperDomeConfig::from_toml_file("hypermangle.toml".as_ref());
+    setup_logger();
     async_run_router(
         load_scripts_into_router(router(Router::new()), "scripts".as_ref(), Handle::current()),
         config,
