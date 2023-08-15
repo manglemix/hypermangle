@@ -2,7 +2,6 @@ use std::{
     fs::read_to_string,
     path::{Path, PathBuf},
     sync::OnceLock,
-    time::Instant,
 };
 
 use axum::{
@@ -27,7 +26,7 @@ struct PyHandlers {
 }
 
 #[cfg(feature = "hot-reload")]
-static PY_HANDLERS: OnceLock<RwLock<FxHashMap<PathBuf, (PyHandlers, std::time::Instant)>>> =
+static PY_HANDLERS: OnceLock<RwLock<FxHashMap<PathBuf, (PyHandlers, std::sync::atomic::AtomicU8)>>> =
     OnceLock::new();
 
 #[derive(Debug)]
@@ -244,7 +243,7 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
         PY_HANDLERS
             .get_or_init(Default::default)
             .write()
-            .insert(path.to_owned(), (py_handlers, Instant::now()));
+            .insert(path.to_owned(), (py_handlers, Default::default()));
     }
 
     router
@@ -270,22 +269,19 @@ pub(crate) fn py_handle_notify_event(
                 continue;
             };
 
-            {
-                let mut lock = py_handlers.write();
-                let Some((_, instant)) = lock.get_mut(path) else {
+            let id = {
+                let lock = py_handlers.read();
+                let Some((_, instant)) = lock.get(path) else {
                     return;
                 };
-                *instant = Instant::now();
-            }
+                instant.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+            };
 
-            let start = Instant::now();
             tokio::time::sleep(SYNC_CHANGES_DELAY).await;
-            let actual_sleep_time = start.elapsed();
 
             let lock = py_handlers.upgradable_read();
 
-            if lock.get(path).unwrap().1.elapsed() < actual_sleep_time {
-                println!("ll");
+            if lock.get(path).unwrap().1.load(std::sync::atomic::Ordering::Relaxed) != id {
                 return;
             }
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
