@@ -1,12 +1,12 @@
 [package]
 name = "hypermangle-dev"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hypermangle-core = { "path" = "../hypermangle-core", features = ["hot-reload"] }
+hypermangle-core = { "path" = "../hypermangle-core", features = ["hot-reload", "python"] }
 # hypermangle-api = { "path" = "../hypermangle-api" }
 # clap = { version = "4.3.*", features = ["derive"] }
 # log = { workspace = true }

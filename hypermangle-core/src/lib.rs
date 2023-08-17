@@ -6,14 +6,14 @@ use std::{
     fs::read_to_string,
     net::SocketAddr,
     path::Path,
-    sync::{Arc, OnceLock},
     time::SystemTime,
 };
 
-use axum::{http::StatusCode, Router};
+use axum::Router;
 use bearer::BearerAuth;
-use log::error;
+#[cfg(feature = "python")]
 use py::load_py_into_router;
+#[cfg(feature = "python")]
 use pyo3_asyncio::TaskLocals;
 use regex::RegexSet;
 use serde::Deserialize;
@@ -24,20 +24,24 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+#[cfg(feature = "python")]
 pub use pyo3_asyncio::{self, tokio::main as hypermangle_main};
+#[cfg(feature = "python")]
 pub use pyo3::{self, PyResult};
 pub use axum;
 
 mod bearer;
+#[cfg(feature = "python")]
 mod py;
 
-#[cfg(feature = "hot-reload")]
+#[cfg(all(feature = "hot-reload", feature = "python"))]
 const SYNC_CHANGES_DELAY: std::time::Duration = std::time::Duration::from_millis(1000);
 
-static PY_TASK_LOCALS: OnceLock<TaskLocals> = OnceLock::new();
+#[cfg(feature = "python")]
+static PY_TASK_LOCALS: std::sync::OnceLock<TaskLocals> = std::sync::OnceLock::new();
 
 pub fn load_scripts_into_router(mut router: Router, path: &Path, async_runtime: Handle) -> Router {
-    #[cfg(feature = "hot-reload")]
+    #[cfg(all(feature = "hot-reload", feature = "python"))]
     {
         use notify::Watcher;
         let async_runtime = async_runtime.clone();
@@ -46,10 +50,10 @@ pub fn load_scripts_into_router(mut router: Router, path: &Path, async_runtime: 
             notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
                 Ok(event) => {
                     let _guard = async_runtime.enter();
-                    let event = Arc::new(event);
+                    let event = std::sync::Arc::new(event);
                     py::py_handle_notify_event(event.clone(), working_dir.clone());
                 }
-                Err(event) => error!("File Watcher Error: {event:?}"),
+                Err(event) => log::error!("File Watcher Error: {event:?}"),
             })
             .expect("Filesystem notification should be available");
 
@@ -74,6 +78,7 @@ pub fn load_scripts_into_router(mut router: Router, path: &Path, async_runtime: 
             router = load_scripts_into_router(router, &path, async_runtime.clone());
         } else if file_type.is_file() {
             match path.extension().map(OsStr::to_str).flatten() {
+                #[cfg(feature = "python")]
                 Some("py") => router = load_py_into_router(router, &path),
                 _ => {}
             }
@@ -102,9 +107,10 @@ pub fn setup_logger() {
         .expect("Logger should initialize successfully");
 }
 
+#[cfg(feature = "python")]
 #[inline]
-fn u16_to_status(code: u16, f: impl Fn() -> String) -> StatusCode {
-    StatusCode::from_u16(code).expect(&f())
+fn u16_to_status(code: u16, f: impl Fn() -> String) -> axum::http::StatusCode {
+    axum::http::StatusCode::from_u16(code).expect(&f())
 }
 
 #[derive(Deserialize)]
@@ -129,6 +135,7 @@ impl HyperDomeConfig {
 
 #[inline]
 pub async fn async_run_router(mut router: Router, config: HyperDomeConfig) {
+    #[cfg(feature = "python")]
     PY_TASK_LOCALS
         .set(pyo3::Python::with_gil(|py| pyo3_asyncio::tokio::get_current_locals(py)).unwrap())
         .unwrap();
