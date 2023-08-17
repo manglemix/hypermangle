@@ -26,6 +26,7 @@ use tower_http::{
 
 pub use pyo3_asyncio::{self, tokio::main as hypermangle_main};
 pub use pyo3::{self, PyResult};
+pub use axum;
 
 mod bearer;
 mod py;
