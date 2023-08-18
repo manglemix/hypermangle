@@ -2,20 +2,31 @@
 #![feature(result_flattening)]
 #![feature(never_type)]
 
-use std::{ffi::OsStr, fs::{read_to_string, File}, net::SocketAddr, path::Path, time::SystemTime, io::BufReader, error::Error};
+use std::{
+    error::Error,
+    ffi::OsStr,
+    fs::{read_to_string, File},
+    io::BufReader,
+    net::SocketAddr,
+    path::Path,
+    time::SystemTime,
+};
 
 use axum::Router;
 use bearer::BearerAuth;
-use hyper::server::{Builder, accept::Accept};
+use hyper::server::{accept::Accept, Builder};
 use lers::solver::Http01Solver;
-use log::{error, info, warn};
+use log::{info, warn};
 #[cfg(feature = "python")]
 use py::load_py_into_router;
 #[cfg(feature = "python")]
 use pyo3_asyncio::TaskLocals;
 use regex::RegexSet;
 use serde::Deserialize;
-use tokio::{runtime::Handle, io::{AsyncWrite, AsyncRead}};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    runtime::Handle,
+};
 use tokio_rustls::rustls::{Certificate, PrivateKey};
 use tower::ServiceBuilder;
 use tower_http::{
@@ -23,11 +34,11 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-pub use axum;
-#[cfg(feature = "python")]
-pub use pyo3::{self, PyResult};
-#[cfg(feature = "python")]
-pub use pyo3_asyncio::{self, tokio::main as hypermangle_main};
+// pub use axum;
+// #[cfg(feature = "python")]
+// pub use pyo3::{self, PyResult};
+// #[cfg(feature = "python")]
+// pub use pyo3_asyncio::{self, tokio::main as hypermangle_main};
 
 use crate::tls::TlsAcceptor;
 
@@ -42,7 +53,9 @@ const SYNC_CHANGES_DELAY: std::time::Duration = std::time::Duration::from_millis
 #[cfg(feature = "python")]
 static PY_TASK_LOCALS: std::sync::OnceLock<TaskLocals> = std::sync::OnceLock::new();
 
-pub fn load_scripts_into_router(mut router: Router, path: &Path, async_runtime: Handle) -> Router {
+pub fn load_scripts_into_router(mut router: Router, path: &Path) -> Router {
+    let async_runtime = Handle::current();
+
     #[cfg(feature = "python")]
     {
         #[cfg(feature = "hot-reload")]
@@ -60,14 +73,14 @@ pub fn load_scripts_into_router(mut router: Router, path: &Path, async_runtime: 
                     Err(event) => log::error!("File Watcher Error: {event:?}"),
                 })
                 .expect("Filesystem notification should be available");
-    
+
             watcher
                 .watch(path, notify::RecursiveMode::Recursive)
                 .expect("Scripts folder should be watchable");
-    
+
             Box::leak(Box::new(watcher));
         }
-    
+
         for result in path
             .read_dir()
             .expect("Scripts directory should be readable")
@@ -77,9 +90,9 @@ pub fn load_scripts_into_router(mut router: Router, path: &Path, async_runtime: 
             let file_type = entry
                 .file_type()
                 .expect("File type of script or sub-directory should be accessible");
-    
+
             if file_type.is_dir() {
-                router = load_scripts_into_router(router, &path, async_runtime.clone());
+                router = load_scripts_into_router(router, &path);
             } else if file_type.is_file() {
                 match path.extension().map(OsStr::to_str).flatten() {
                     #[cfg(feature = "python")]
@@ -147,15 +160,13 @@ impl HyperDomeConfig {
 }
 
 #[inline]
-pub async fn async_run_router<I>(server: Builder<I> ,mut router: Router, config: HyperDomeConfig) 
+pub async fn async_run_router<I>(server: Builder<I>, mut router: Router, config: HyperDomeConfig)
 where
     I: Accept,
     I::Error: Into<Box<dyn Error + Send + Sync>>,
-    I::Conn: AsyncRead + AsyncWrite + Unpin + Send + 'static, {
-    #[cfg(feature = "python")]
-    PY_TASK_LOCALS
-        .set(pyo3::Python::with_gil(|py| pyo3_asyncio::tokio::get_current_locals(py)).unwrap())
-        .unwrap();
+    I::Conn: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    router = load_scripts_into_router(router, "scripts".as_ref());
 
     router = router.layer(
         ServiceBuilder::new()
@@ -190,17 +201,18 @@ where
         )));
     }
 
-    server
-        .serve(router.into_make_service())
-        .await
-        .unwrap();
+    server.serve(router.into_make_service()).await.unwrap();
 }
 
-pub async fn auto_main(router: impl FnOnce(Router) -> Router) {
+#[tokio::main]
+pub async fn auto_main(router: Router) {
     let config = HyperDomeConfig::from_toml_file("hypermangle.toml".as_ref());
     setup_logger();
 
-    let router = load_scripts_into_router(router(Router::new()), "scripts".as_ref(), Handle::current());
+    #[cfg(feature = "python")]
+    PY_TASK_LOCALS
+        .set(pyo3::Python::with_gil(|py| pyo3_asyncio::TaskLocals::new(py.import("asyncio").unwrap().call_method0("new_event_loop").unwrap())))
+        .unwrap();
 
     if !config.cert_path.is_empty() && !config.key_path.is_empty() {
         let cert_path: &Path = config.cert_path.as_ref();
@@ -215,17 +227,22 @@ pub async fn auto_main(router: impl FnOnce(Router) -> Router) {
 
             let file = File::open(&key_path).expect("Key path should be readable");
             let mut reader = BufReader::new(file);
-            let mut keys = rustls_pemfile::pkcs8_private_keys(&mut reader).expect("Key file should be valid");
-        
+            let mut keys =
+                rustls_pemfile::pkcs8_private_keys(&mut reader).expect("Key file should be valid");
+
             let key = match keys.len() {
                 0 => panic!("No PKCS8-encoded private key found in key file"),
                 1 => PrivateKey(keys.remove(0)),
                 _ => panic!("More than one PKCS8-encoded private key found in key file"),
             };
 
-            async_run_router(axum::Server::builder(TlsAcceptor::new(certs, key, &config.bind_address).await), router, config).await;
-            return
-
+            async_run_router(
+                axum::Server::builder(TlsAcceptor::new(certs, key, &config.bind_address).await),
+                router,
+                config,
+            )
+            .await;
+            return;
         } else if !cert_path.exists() && !key_path.exists() {
             warn!("Acquiring HTTP Certificates");
             macro_rules! unwrap {
@@ -244,66 +261,58 @@ pub async fn auto_main(router: impl FnOnce(Router) -> Router) {
             #[cfg(debug_assertions)]
             const URL: &str = lers::LETS_ENCRYPT_STAGING_URL;
 
-            // let (cert_sender, cert_recv) = tokio::sync::oneshot::channel();
-            let certificate = std::thread::scope(|s| {
-                s.spawn(|| {
-                    tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .unwrap()
-                        .block_on(async {
-                            tokio::runtime::Runtime::new().unwrap();
-                            let solver = Http01Solver::new();
-                            let handle = unwrap!(solver.start(&config.bind_address));
-        
-                            let directory = unwrap!(
-                                lers::Directory::builder(URL)
-                                    .http01_solver(Box::new(solver))
-                                    .build()
-                                    .await
-                            );
-        
-                            if config.email.is_empty() {
-                                panic!("Email not provided!");
-                            }
-        
-                            let account = unwrap!(
-                                directory
-                                    .account()
-                                    .terms_of_service_agreed(true)
-                                    .contacts(vec![format!("mailto:{}", config.email)])
-                                    .create_if_not_exists()
-                                    .await
-                            );
-        
-                            let cert = unwrap!(
-                                account
-                                    .certificate()
-                                    .add_domain(&config.domain_name)
-                                    .obtain()
-                                    .await
-                            );
-        
-                            tokio::spawn(handle.stop());
-                            
-                            cert
-                        })
-                }).join().unwrap()
-            });
+            if config.email.is_empty() {
+                panic!("Email not provided!");
+            }
 
-            let certs: Vec<_> = certificate.x509_chain().iter().map(|x| Certificate(x.to_der().unwrap())).collect();
+            let solver = Http01Solver::new();
+            let handle = unwrap!(solver.start(&config.bind_address));
+
+            let directory = unwrap!(
+                lers::Directory::builder(URL)
+                    .http01_solver(Box::new(solver))
+                    .build()
+                    .await
+            );
+
+            let account = unwrap!(
+                directory
+                    .account()
+                    .terms_of_service_agreed(true)
+                    .contacts(vec![format!("mailto:{}", config.email)])
+                    .create_if_not_exists()
+                    .await
+            );
+
+            let certificate = unwrap!(
+                account
+                    .certificate()
+                    .add_domain(&config.domain_name)
+                    .obtain()
+                    .await
+            );
+
+            tokio::spawn(handle.stop());
+
+            let certs: Vec<_> = certificate
+                .x509_chain()
+                .iter()
+                .map(|x| Certificate(x.to_der().unwrap()))
+                .collect();
             let key = PrivateKey(certificate.private_key_to_der().unwrap());
 
-            async_run_router(axum::Server::builder(TlsAcceptor::new(certs, key, &config.bind_address).await), router, config).await;
-            return
-
+            let bind_address = config.bind_address.clone();
+            async_run_router(
+                axum::Server::builder(TlsAcceptor::new(certs, key, &bind_address).await),
+                router,
+                config,
+            )
+            .await;
+            return;
         } else if !cert_path.exists() {
-            error!("Certificate does not exist at the given path");
-            return;
-
+            panic!("Certificate does not exist at the given path");
         } else {
-            error!("Private Key does not exist at the given path");
-            return;
+            panic!("Private Key does not exist at the given path");
         }
     }
 
@@ -311,6 +320,5 @@ pub async fn auto_main(router: impl FnOnce(Router) -> Router) {
         axum::Server::bind(&config.bind_address),
         router,
         config,
-    )
-    .await;
+    ).await;
 }

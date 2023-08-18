@@ -1,6 +1,7 @@
 use std::{
+    net::SocketAddr,
     sync::Arc,
-    task::{self, Poll}, net::SocketAddr,
+    task::{self, Poll},
 };
 
 use futures::{stream::FuturesUnordered, StreamExt};
@@ -21,7 +22,7 @@ impl TlsAcceptor {
     pub async fn new(
         certs: Vec<Certificate>,
         key: tokio_rustls::rustls::PrivateKey,
-        bind_address: &SocketAddr
+        bind_address: &SocketAddr,
     ) -> Self {
         Self {
             acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(
@@ -31,8 +32,10 @@ impl TlsAcceptor {
                     .with_single_cert(certs, key)
                     .expect("Certificate and Key should be valid"),
             )),
-            listener: TcpListener::bind(bind_address).await.expect("TcpListener should be binded"),
-            accepting: Default::default()
+            listener: TcpListener::bind(bind_address)
+                .await
+                .expect("TcpListener should be binded"),
+            accepting: Default::default(),
         }
     }
 }

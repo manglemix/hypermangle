@@ -206,7 +206,6 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
                 }
             };
         }
-
         handler!(get, "get_handler");
         handler!(post, "post_handler");
 
