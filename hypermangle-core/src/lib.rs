@@ -43,49 +43,52 @@ const SYNC_CHANGES_DELAY: std::time::Duration = std::time::Duration::from_millis
 static PY_TASK_LOCALS: std::sync::OnceLock<TaskLocals> = std::sync::OnceLock::new();
 
 pub fn load_scripts_into_router(mut router: Router, path: &Path, async_runtime: Handle) -> Router {
-    #[cfg(all(feature = "hot-reload", feature = "python"))]
+    #[cfg(feature = "python")]
     {
-        use notify::Watcher;
-        let async_runtime = async_runtime.clone();
-        let working_dir = path.canonicalize().unwrap().parent().unwrap().to_owned();
-        let mut watcher =
-            notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
-                Ok(event) => {
-                    let _guard = async_runtime.enter();
-                    let event = std::sync::Arc::new(event);
-                    py::py_handle_notify_event(event.clone(), working_dir.clone());
+        #[cfg(feature = "hot-reload")]
+        {
+            use notify::Watcher;
+            let async_runtime = async_runtime.clone();
+            let working_dir = path.canonicalize().unwrap().parent().unwrap().to_owned();
+            let mut watcher =
+                notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
+                    Ok(event) => {
+                        let _guard = async_runtime.enter();
+                        let event = std::sync::Arc::new(event);
+                        py::py_handle_notify_event(event.clone(), working_dir.clone());
+                    }
+                    Err(event) => log::error!("File Watcher Error: {event:?}"),
+                })
+                .expect("Filesystem notification should be available");
+    
+            watcher
+                .watch(path, notify::RecursiveMode::Recursive)
+                .expect("Scripts folder should be watchable");
+    
+            Box::leak(Box::new(watcher));
+        }
+    
+        for result in path
+            .read_dir()
+            .expect("Scripts directory should be readable")
+        {
+            let entry = result.expect("Script or sub-directory should be readable");
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .expect("File type of script or sub-directory should be accessible");
+    
+            if file_type.is_dir() {
+                router = load_scripts_into_router(router, &path, async_runtime.clone());
+            } else if file_type.is_file() {
+                match path.extension().map(OsStr::to_str).flatten() {
+                    #[cfg(feature = "python")]
+                    Some("py") => router = load_py_into_router(router, &path),
+                    _ => {}
                 }
-                Err(event) => log::error!("File Watcher Error: {event:?}"),
-            })
-            .expect("Filesystem notification should be available");
-
-        watcher
-            .watch(path, notify::RecursiveMode::Recursive)
-            .expect("Scripts folder should be watchable");
-
-        Box::leak(Box::new(watcher));
-    }
-
-    for result in path
-        .read_dir()
-        .expect("Scripts directory should be readable")
-    {
-        let entry = result.expect("Script or sub-directory should be readable");
-        let path = entry.path();
-        let file_type = entry
-            .file_type()
-            .expect("File type of script or sub-directory should be accessible");
-
-        if file_type.is_dir() {
-            router = load_scripts_into_router(router, &path, async_runtime.clone());
-        } else if file_type.is_file() {
-            match path.extension().map(OsStr::to_str).flatten() {
-                #[cfg(feature = "python")]
-                Some("py") => router = load_py_into_router(router, &path),
-                _ => {}
+            } else {
+                panic!("Failed to get the file type of {entry:?}");
             }
-        } else {
-            panic!("Failed to get the file type of {entry:?}");
         }
     }
 
@@ -241,52 +244,55 @@ pub async fn auto_main(router: impl FnOnce(Router) -> Router) {
             #[cfg(debug_assertions)]
             const URL: &str = lers::LETS_ENCRYPT_STAGING_URL;
 
-            let certificate = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async {
-                    tokio::runtime::Runtime::new().unwrap();
-                    let solver = Http01Solver::new();
-                    let handle = unwrap!(solver.start(&config.bind_address));
-
-                    let directory = unwrap!(
-                        lers::Directory::builder(URL)
-                            .http01_solver(Box::new(solver))
-                            .build()
-                            .await
-                    );
-
-                    if config.email.is_empty() {
-                        panic!("Email not provided!");
-                    }
-
-                    let account = unwrap!(
-                        directory
-                            .account()
-                            .terms_of_service_agreed(true)
-                            .contacts(vec![format!("mailto:{}", config.email)])
-                            .create_if_not_exists()
-                            .await
-                    );
-
-                    let cert = unwrap!(
-                        account
-                            .certificate()
-                            .add_domain(&config.domain_name)
-                            .obtain()
-                            .await
-                    );
-
-                    tokio::spawn(handle.stop());
-                    
-                    cert
-                });
-            
+            // let (cert_sender, cert_recv) = tokio::sync::oneshot::channel();
+            let certificate = std::thread::scope(|s| {
+                s.spawn(|| {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap()
+                        .block_on(async {
+                            tokio::runtime::Runtime::new().unwrap();
+                            let solver = Http01Solver::new();
+                            let handle = unwrap!(solver.start(&config.bind_address));
+        
+                            let directory = unwrap!(
+                                lers::Directory::builder(URL)
+                                    .http01_solver(Box::new(solver))
+                                    .build()
+                                    .await
+                            );
+        
+                            if config.email.is_empty() {
+                                panic!("Email not provided!");
+                            }
+        
+                            let account = unwrap!(
+                                directory
+                                    .account()
+                                    .terms_of_service_agreed(true)
+                                    .contacts(vec![format!("mailto:{}", config.email)])
+                                    .create_if_not_exists()
+                                    .await
+                            );
+        
+                            let cert = unwrap!(
+                                account
+                                    .certificate()
+                                    .add_domain(&config.domain_name)
+                                    .obtain()
+                                    .await
+                            );
+        
+                            tokio::spawn(handle.stop());
+                            
+                            cert
+                        })
+                }).join().unwrap()
+            });
 
             let certs: Vec<_> = certificate.x509_chain().iter().map(|x| Certificate(x.to_der().unwrap())).collect();
             let key = PrivateKey(certificate.private_key_to_der().unwrap());
-
 
             async_run_router(axum::Server::builder(TlsAcceptor::new(certs, key, &config.bind_address).await), router, config).await;
             return
