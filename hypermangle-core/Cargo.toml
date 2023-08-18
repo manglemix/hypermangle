@@ -16,6 +16,7 @@ fxhash = "0.2.*"
 axum = { workspace = true }
 tower = "0.4.*"
 tower-http = { version = "0.4.*", features = ["cors", "compression-gzip", "compression-br", "trace", "auth"] }
+hyper = "0.14.*"
 
 constant_time_eq = "0.3.*"
 regex = "1.9.*"
@@ -23,12 +24,16 @@ notify = { version = "6.0.*", optional = true, default-features = false, feature
 
 parking_lot = { workspace = true }
 tokio = { workspace = true }
+futures = "0.3.*"
 
 toml = { workspace = true }
 serde = { workspace = true}
 
 hypermangle-py = "0.*"
-# hypermangle-api = { path = "../hypermangle-api" }
+
+lers = { version = "0.4.*", features = ["http-01"] }
+tokio-rustls = "0.24.*"
+rustls-pemfile = "1.0.*"
 
 fern = "0.6.*"
 humantime = "2.1.*"

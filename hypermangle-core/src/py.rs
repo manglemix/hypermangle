@@ -26,8 +26,9 @@ struct PyHandlers {
 }
 
 #[cfg(feature = "hot-reload")]
-static PY_HANDLERS: OnceLock<RwLock<FxHashMap<PathBuf, (PyHandlers, std::sync::atomic::AtomicU8)>>> =
-    OnceLock::new();
+static PY_HANDLERS: OnceLock<
+    RwLock<FxHashMap<PathBuf, (PyHandlers, std::sync::atomic::AtomicU8)>>,
+> = OnceLock::new();
 
 #[derive(Debug)]
 enum LoadPyErr {
@@ -281,7 +282,13 @@ pub(crate) fn py_handle_notify_event(
 
             let lock = py_handlers.upgradable_read();
 
-            if lock.get(path).unwrap().1.load(std::sync::atomic::Ordering::Relaxed) != id {
+            if lock
+                .get(path)
+                .unwrap()
+                .1
+                .load(std::sync::atomic::Ordering::Relaxed)
+                != id
+            {
                 return;
             }
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);

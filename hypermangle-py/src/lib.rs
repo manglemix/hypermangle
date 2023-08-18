@@ -13,10 +13,26 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use tokio::sync::Mutex;
 
-create_exception!(hypermangle_py, ClosedWebSocket, pyo3::exceptions::PyException);
-create_exception!(hypermangle_py, WebSocketError, pyo3::exceptions::PyException);
-create_exception!(hypermangle_py, NotYetAccepted, pyo3::exceptions::PyException);
-create_exception!(hypermangle_py, AlreadyAccepted, pyo3::exceptions::PyException);
+create_exception!(
+    hypermangle_py,
+    ClosedWebSocket,
+    pyo3::exceptions::PyException
+);
+create_exception!(
+    hypermangle_py,
+    WebSocketError,
+    pyo3::exceptions::PyException
+);
+create_exception!(
+    hypermangle_py,
+    NotYetAccepted,
+    pyo3::exceptions::PyException
+);
+create_exception!(
+    hypermangle_py,
+    AlreadyAccepted,
+    pyo3::exceptions::PyException
+);
 
 enum WebSocketInner {
     Pending((WebSocketUpgrade, tokio::sync::oneshot::Sender<Response>)),
