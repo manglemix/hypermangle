@@ -11,8 +11,9 @@ use hypermangle_core::{
 struct Args {}
 
 impl ExecutableArgs for Args {
-    async fn execute<W: AsyncWrite + Unpin>(self, mut writer: W) {
-        let _ = writer.write_all("Pinged".as_bytes()).await;
+    async fn execute<W: AsyncWrite + Unpin>(self, mut writer: W) -> bool {
+        let _ = writer.write_all("Killing...".as_bytes()).await;
+        true
     }
 }
 

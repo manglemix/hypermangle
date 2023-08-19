@@ -70,7 +70,7 @@ pub async fn send_args_to_remote() {
 }
 
 pub trait ExecutableArgs: Parser {
-    async fn execute<W: AsyncWrite + Unpin>(self, writer: W);
+    async fn execute<W: AsyncWrite + Unpin>(self, writer: W) -> bool;
 }
 
 pub async fn listen_for_commands<P: ExecutableArgs>() {
@@ -115,10 +115,13 @@ pub async fn listen_for_commands<P: ExecutableArgs>() {
                     Ok(x) => x,
                     Err(e) => {
                         unwrap!(stream.write_all(e.to_string().as_bytes()).await);
+                        let _ = stream.close().await;
                         continue;
                     }
                 };
-                args.execute(stream).await;
+                if args.execute(stream).await {
+                    break
+                }
             }
         }
     }
