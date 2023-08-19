@@ -1,4 +1,4 @@
-use std::{ffi::OsString, io::Write};
+use std::{ffi::OsString, mem::take};
 
 use clap::{crate_name, Parser};
 use futures::AsyncReadExt;
@@ -6,16 +6,45 @@ use interprocess::local_socket::tokio::{LocalSocketListener, LocalSocketStream};
 use log::error;
 use serde::{Deserialize, Serialize};
 
-pub use futures::{AsyncWrite, AsyncWriteExt};
+use futures::AsyncWriteExt;
+
+
+pub struct RemoteClient {
+    stream: Option<LocalSocketStream>
+}
+
+
+impl RemoteClient {
+    pub async fn send(&mut self, msg: String) {
+        if let Err(e) = send_msg(BaseCommand::Packet(msg), self.stream.as_mut().unwrap()).await {
+            error!("Faced the following error while responding to remote client: {e}");
+        }
+    }
+}
+
+
+impl Drop for RemoteClient {
+    fn drop(&mut self) {
+        let mut stream = take(&mut self.stream).unwrap();
+        tokio::spawn(async move {
+            if let Err(e) = send_msg(BaseCommand::CloseSocket, &mut stream).await {
+                error!("Faced the following error while ending connection to remote client: {e}");
+            }
+        });
+    }
+}
+
 
 #[derive(Serialize, Deserialize)]
 enum BaseCommand {
     Id,
     Args(Vec<OsString>),
+    Packet(String),
+    CloseSocket
 }
 
 fn get_socket_name() -> String {
-    format!("{}.sock", crate_name!())
+    format!("@{}_socket", crate_name!())
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -55,22 +84,27 @@ pub async fn send_args_to_remote() {
         &mut stream,
     )
     .await
-    .expect("Remote Server should have accepted the given arguments");
+    .expect("Remote service should have accepted the given arguments");
 
-    let mut stdout = std::io::stdout();
     loop {
-        let mut buf = [0u8; 1024];
-        let Ok(n) = stream.read(&mut buf).await else {
-            break;
-        };
-        if stdout.write_all(buf.split_at(n).0).is_err() {
-            break;
-        };
+        let mut msg_size = [0u8; (usize::BITS / 8) as usize];
+        stream.read_exact(&mut msg_size).await.expect("Remote service should still be connected");
+        let msg_size = usize::from_ne_bytes(msg_size);
+        let mut msg = vec![0u8; msg_size];
+        stream.read_exact(&mut msg).await.expect("Remote service should still be connected");
+
+        let msg: BaseCommand = bincode::deserialize(&msg).expect("Remote service should have sent a valid message");
+
+        match msg {
+            BaseCommand::Packet(msg) => print!("{msg}"),
+            BaseCommand::CloseSocket => break,
+            _ => { }
+        }
     }
 }
 
 pub trait ExecutableArgs: Parser {
-    async fn execute<W: AsyncWrite + Unpin>(self, writer: W) -> bool;
+    async fn execute(self, writer: RemoteClient) -> bool;
 }
 
 pub async fn listen_for_commands<P: ExecutableArgs>() {
@@ -119,10 +153,14 @@ pub async fn listen_for_commands<P: ExecutableArgs>() {
                         continue;
                     }
                 };
-                if args.execute(stream).await {
+                if args.execute(RemoteClient { stream: Some(stream) }).await {
                     break
                 }
+                continue
             }
+            _ => { }
         }
+
+        unwrap!(send_msg(BaseCommand::CloseSocket, &mut stream).await);
     }
 }

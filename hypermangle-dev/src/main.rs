@@ -4,15 +4,15 @@ use axum::Router;
 use clap::Parser;
 use hypermangle_core::{
     auto_main,
-    console::{AsyncWrite, AsyncWriteExt, ExecutableArgs},
+    console::{ExecutableArgs, RemoteClient},
 };
 
 #[derive(Parser)]
 struct Args {}
 
 impl ExecutableArgs for Args {
-    async fn execute<W: AsyncWrite + Unpin>(self, mut writer: W) -> bool {
-        let _ = writer.write_all("Killing...".as_bytes()).await;
+    async fn execute(self, mut writer: RemoteClient) -> bool {
+        let _ = writer.send("Killing...".into()).await;
         true
     }
 }
