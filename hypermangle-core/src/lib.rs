@@ -34,12 +34,6 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-// pub use axum;
-// #[cfg(feature = "python")]
-// pub use pyo3::{self, PyResult};
-// #[cfg(feature = "python")]
-// pub use pyo3_asyncio::{self, tokio::main as hypermangle_main};
-
 use crate::tls::TlsAcceptor;
 
 mod bearer;
@@ -210,9 +204,13 @@ pub async fn auto_main(router: Router) {
     setup_logger();
 
     #[cfg(feature = "python")]
-    PY_TASK_LOCALS
-        .set(pyo3::Python::with_gil(|py| pyo3_asyncio::TaskLocals::new(py.import("asyncio").unwrap().call_method0("new_event_loop").unwrap())))
-        .unwrap();
+    std::thread::spawn(|| pyo3::Python::with_gil(|py| {
+        let event_loop = py.import("asyncio").unwrap().call_method0("new_event_loop").unwrap();
+        PY_TASK_LOCALS
+            .set(pyo3_asyncio::TaskLocals::new(event_loop))
+            .unwrap();
+        event_loop.call_method0("run_forever").unwrap();
+    }));
 
     if !config.cert_path.is_empty() && !config.key_path.is_empty() {
         let cert_path: &Path = config.cert_path.as_ref();

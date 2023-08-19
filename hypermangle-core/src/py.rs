@@ -188,7 +188,7 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
                                 .expect(&exception_msg);
 
                             pyo3_asyncio::into_future_with_locals(
-                                PY_TASK_LOCALS.get().unwrap(),
+                                &PY_TASK_LOCALS.get().unwrap(),
                                 result.as_ref(py),
                             )
                             .expect(&format!("{} should be asynchronous", $handler))
@@ -206,6 +206,7 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
                 }
             };
         }
+
         handler!(get, "get_handler");
         handler!(post, "post_handler");
 
