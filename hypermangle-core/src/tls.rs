@@ -49,11 +49,11 @@ impl Accept for TlsAcceptor {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> Poll<Option<Result<Self::Conn, Self::Error>>> {
-        let Poll::Ready(result) = self.listener.poll_accept(cx) else {
-            return Poll::Pending;
+        if let Poll::Ready(result) = self.listener.poll_accept(cx) {
+            let (stream, _) = result?;
+            self.accepting.push(self.acceptor.accept(stream));
         };
-        let (stream, _) = result?;
-        self.accepting.push(self.acceptor.accept(stream));
+        
         let Poll::Ready(Some(result)) = self.accepting.poll_next_unpin(cx) else {
             return Poll::Pending;
         };

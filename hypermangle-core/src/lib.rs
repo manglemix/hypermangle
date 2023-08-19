@@ -5,7 +5,7 @@
 use std::{
     error::Error,
     ffi::OsStr,
-    fs::{read_to_string, File},
+    fs::{read_to_string, File, write},
     io::BufReader,
     net::SocketAddr,
     path::Path,
@@ -298,6 +298,11 @@ pub async fn auto_main(router: Router) {
                 .map(|x| Certificate(x.to_der().unwrap()))
                 .collect();
             let key = PrivateKey(certificate.private_key_to_der().unwrap());
+
+            write(cert_path, certificate.fullchain_to_pem().unwrap()).expect("Cert file should be writable");
+            write(key_path, certificate.private_key_to_pem().unwrap()).expect("Key file should be writable");
+
+            info!("Certificates successfully downloaded");
 
             let bind_address = config.bind_address.clone();
             async_run_router(
