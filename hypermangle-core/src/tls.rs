@@ -6,6 +6,7 @@ use std::{
 
 use futures::{stream::FuturesUnordered, StreamExt};
 use hyper::server::accept::Accept;
+use log::debug;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{
     rustls::{Certificate, ServerConfig},
@@ -57,6 +58,13 @@ impl Accept for TlsAcceptor {
         let Poll::Ready(Some(result)) = self.accepting.poll_next_unpin(cx) else {
             return Poll::Pending;
         };
-        Poll::Ready(Some(result))
+        
+        match result {
+            Err(e) => {
+                debug!("client Error: {e:?}");
+                Poll::Pending
+            },
+            ok => Poll::Ready(Some(ok))
+        }
     }
 }

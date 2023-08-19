@@ -4,7 +4,6 @@
 
 use std::{
     error::Error,
-    ffi::OsStr,
     fs::{read_to_string, File, write},
     io::BufReader,
     net::SocketAddr,
@@ -47,15 +46,14 @@ const SYNC_CHANGES_DELAY: std::time::Duration = std::time::Duration::from_millis
 #[cfg(feature = "python")]
 static PY_TASK_LOCALS: std::sync::OnceLock<TaskLocals> = std::sync::OnceLock::new();
 
-pub fn load_scripts_into_router(mut router: Router, path: &Path) -> Router {
-    let async_runtime = Handle::current();
-
+pub fn load_scripts_into_router(router: Router, path: &Path) -> Router {
     #[cfg(feature = "python")]
     {
+        let mut router = router;
         #[cfg(feature = "hot-reload")]
         {
             use notify::Watcher;
-            let async_runtime = async_runtime.clone();
+            let async_runtime = Handle::current();
             let working_dir = path.canonicalize().unwrap().parent().unwrap().to_owned();
             let mut watcher =
                 notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
@@ -88,7 +86,7 @@ pub fn load_scripts_into_router(mut router: Router, path: &Path) -> Router {
             if file_type.is_dir() {
                 router = load_scripts_into_router(router, &path);
             } else if file_type.is_file() {
-                match path.extension().map(OsStr::to_str).flatten() {
+                match path.extension().map(std::ffi::OsStr::to_str).flatten() {
                     #[cfg(feature = "python")]
                     Some("py") => router = load_py_into_router(router, &path),
                     _ => {}
@@ -97,8 +95,11 @@ pub fn load_scripts_into_router(mut router: Router, path: &Path) -> Router {
                 panic!("Failed to get the file type of {entry:?}");
             }
         }
+
+        router
     }
 
+    #[cfg(not(feature = "python"))]
     router
 }
 
@@ -234,6 +235,7 @@ pub async fn auto_main(router: Router) {
                 _ => panic!("More than one PKCS8-encoded private key found in key file"),
             };
 
+            info!("HTTP Certificates successfully loaded");
             async_run_router(
                 axum::Server::builder(TlsAcceptor::new(certs, key, &config.bind_address).await),
                 router,
