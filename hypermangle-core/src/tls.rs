@@ -57,7 +57,7 @@ impl Accept for TlsAcceptor {
             let (stream, _) = result?;
             self.accepting.push(self.acceptor.accept(stream));
         };
-        
+
         let Poll::Ready(Some(result)) = self.accepting.poll_next_unpin(cx) else {
             return Poll::Pending;
         };
@@ -66,8 +66,8 @@ impl Accept for TlsAcceptor {
             Err(e) => {
                 debug!("client Error: {e:?}");
                 Poll::Pending
-            },
-            ok => Poll::Ready(Some(ok))
+            }
+            ok => Poll::Ready(Some(ok)),
         }
     }
 }

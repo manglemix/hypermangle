@@ -15,6 +15,7 @@ parking_lot = "0.12.*"
 tokio = { version = "1.30.*", features = ["rt-multi-thread", "macros"] }
 toml = "0.7.*"
 serde = { version = "1.0.*", features = ["derive"]}
+clap = { version = "4.3.*", features = ["derive", "cargo"] }
 
 # serde = { version = "1.0.151", features = ["derive"] }
 # derive_more = "0.99.16"

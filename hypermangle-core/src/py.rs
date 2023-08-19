@@ -167,32 +167,34 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
                     let handler = axum::routing::$method(move |body: Bytes| async move {
                         let exception_msg =
                             format!("{} should have ran without exceptions", $handler);
-                        let result = Python::with_gil(|py| {
-                            let body = if let Ok(body) = std::str::from_utf8(&body) {
-                                body.to_object(py)
-                            } else {
-                                body.to_object(py)
-                            };
 
-                            let result = PY_HANDLERS
-                                .get()
-                                .unwrap()
-                                .read()
-                                .get(&path)
-                                .unwrap()
-                                .0
-                                .$method
-                                .as_ref()
-                                .unwrap()
-                                .call1(py, (body,))
-                                .expect(&exception_msg);
+                        let result = {
+                            let reader = PY_HANDLERS.get().unwrap().read();
 
-                            pyo3_asyncio::into_future_with_locals(
-                                &PY_TASK_LOCALS.get().unwrap(),
-                                result.as_ref(py),
-                            )
-                            .expect(&format!("{} should be asynchronous", $handler))
-                        })
+                            Python::with_gil(|py| {
+                                let body = if let Ok(body) = std::str::from_utf8(&body) {
+                                    body.to_object(py)
+                                } else {
+                                    body.to_object(py)
+                                };
+
+                                let result = reader
+                                    .get(&path)
+                                    .unwrap()
+                                    .0
+                                    .$method
+                                    .as_ref()
+                                    .unwrap()
+                                    .call1(py, (body,))
+                                    .expect(&exception_msg);
+
+                                pyo3_asyncio::into_future_with_locals(
+                                    &PY_TASK_LOCALS.get().unwrap(),
+                                    result.as_ref(py),
+                                )
+                                .expect(&format!("{} should be asynchronous", $handler))
+                            })
+                        }
                         .await
                         .expect(&exception_msg);
 
@@ -218,11 +220,10 @@ pub(crate) fn load_py_into_router(mut router: Router, path: &Path) -> Router {
                     let (ws, receiver) = hypermangle_py::WebSocket::new(ws);
 
                     tokio::task::spawn_blocking(move || {
+                        let reader = PY_HANDLERS.get().unwrap().read();
+
                         Python::with_gil(|py| {
-                            PY_HANDLERS
-                                .get()
-                                .unwrap()
-                                .read()
+                            reader
                                 .get(&path)
                                 .unwrap()
                                 .0

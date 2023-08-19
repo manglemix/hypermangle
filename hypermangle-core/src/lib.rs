@@ -1,18 +1,23 @@
 #![feature(path_file_prefix)]
 #![feature(result_flattening)]
 #![feature(never_type)]
+#![feature(os_str_bytes)]
+#![feature(async_fn_in_trait)]
 
 use std::{
     error::Error,
-    fs::{read_to_string, File, write},
+    fs::{read_to_string, write, File},
     io::BufReader,
     net::SocketAddr,
     path::Path,
+    process::Stdio,
     time::SystemTime,
 };
 
 use axum::Router;
 use bearer::BearerAuth;
+use clap::{Parser, Subcommand};
+use console::{listen_for_commands, send_args_to_remote, ExecutableArgs};
 use hyper::server::{accept::Accept, Builder};
 use lers::solver::Http01Solver;
 use log::{info, warn};
@@ -33,9 +38,10 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::tls::TlsAcceptor;
+use crate::{console::does_remote_exist, tls::TlsAcceptor};
 
 mod bearer;
+pub mod console;
 #[cfg(feature = "python")]
 mod py;
 mod tls;
@@ -103,8 +109,14 @@ pub fn load_scripts_into_router(router: Router, path: &Path) -> Router {
     router
 }
 
-pub fn setup_logger() {
-    fern::Dispatch::new()
+pub fn setup_logger(log_file_path: &str, log_level: &str) {
+    let log_level = if log_level.is_empty() {
+        log::LevelFilter::Info
+    } else {
+        log_level.parse().expect("Log Level should be valid")
+    };
+
+    let mut dispatch = fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
                 "[{} {} {}] {}",
@@ -114,10 +126,17 @@ pub fn setup_logger() {
                 message
             ))
         })
-        .level(log::LevelFilter::Info)
-        .chain(std::io::stdout())
+        .level(log_level)
+        .chain(std::io::stdout());
+
+    if !log_file_path.is_empty() {
+        dispatch =
+            dispatch.chain(fern::log_file(log_file_path).expect("Log File should be writable"))
+    }
+
+    dispatch
         .apply()
-        .expect("Logger should initialize successfully");
+        .expect("Logger should have initialized successfully");
 }
 
 #[cfg(feature = "python")]
@@ -145,6 +164,10 @@ pub struct HyperDomeConfig {
     email: String,
     #[serde(default)]
     domain_name: String,
+    #[serde(default)]
+    log_file_path: String,
+    #[serde(default)]
+    log_level: String,
 }
 
 impl HyperDomeConfig {
@@ -155,8 +178,9 @@ impl HyperDomeConfig {
 }
 
 #[inline]
-pub async fn async_run_router<I>(server: Builder<I>, mut router: Router, config: HyperDomeConfig)
+pub async fn async_run_router<P, I>(server: Builder<I>, mut router: Router, config: HyperDomeConfig)
 where
+    P: ExecutableArgs,
     I: Accept,
     I::Error: Into<Box<dyn Error + Send + Sync>>,
     I::Conn: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -196,22 +220,91 @@ where
         )));
     }
 
-    server.serve(router.into_make_service()).await.unwrap();
+    server
+        .serve(router.into_make_service())
+        .with_graceful_shutdown(listen_for_commands::<P>())
+        .await
+        .unwrap();
+}
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Run {
+        #[arg(short, long)]
+        detached: bool,
+    },
+}
+
+pub fn auto_main<P: ExecutableArgs>(router: impl Fn() -> Router) {
+    let Ok(args) = Args::try_parse_from(std::env::args_os()) else {
+        send_args_to_remote();
+        return;
+    };
+
+    match args.command {
+        Commands::Run { detached } => {
+            if let Some(id) = does_remote_exist() {
+                println!("Remote already exists with process id: {id}");
+                return;
+            }
+            if detached {
+                let id = std::process::Command::new(
+                    std::env::current_exe().expect("Current EXE name should be accessible"),
+                )
+                .arg("run")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("Child process should have spawned successfully")
+                .id();
+                println!("Process has spawned successfully with id: {id}");
+                return;
+            }
+        }
+    }
+
+    auto_main_inner::<P>(router());
 }
 
 #[tokio::main]
-pub async fn auto_main(router: Router) {
+async fn auto_main_inner<P: ExecutableArgs>(router: Router) {
     let config = HyperDomeConfig::from_toml_file("hypermangle.toml".as_ref());
-    setup_logger();
+    setup_logger(&config.log_file_path, &config.log_level);
 
     #[cfg(feature = "python")]
-    std::thread::spawn(|| pyo3::Python::with_gil(|py| {
-        let event_loop = py.import("asyncio").unwrap().call_method0("new_event_loop").unwrap();
-        PY_TASK_LOCALS
-            .set(pyo3_asyncio::TaskLocals::new(event_loop))
-            .unwrap();
-        event_loop.call_method0("run_forever").unwrap();
-    }));
+    std::thread::spawn(|| {
+        pyo3::Python::with_gil(|py| {
+            // Disable Ctrl-C handling
+            let signal_module = py.import("signal").unwrap();
+            signal_module
+                .call_method1(
+                    "signal",
+                    (
+                        signal_module.getattr("SIGINT").unwrap(),
+                        signal_module.getattr("SIG_DFL").unwrap(),
+                    ),
+                )
+                .unwrap();
+
+            let event_loop = py
+                .import("asyncio")
+                .unwrap()
+                .call_method0("new_event_loop")
+                .unwrap();
+            PY_TASK_LOCALS
+                .set(pyo3_asyncio::TaskLocals::new(event_loop))
+                .unwrap();
+            event_loop.call_method0("run_forever").unwrap();
+        })
+    });
 
     if !config.cert_path.is_empty() && !config.key_path.is_empty() {
         let cert_path: &Path = config.cert_path.as_ref();
@@ -236,7 +329,7 @@ pub async fn auto_main(router: Router) {
             };
 
             info!("HTTP Certificates successfully loaded");
-            async_run_router(
+            async_run_router::<P, _>(
                 axum::Server::builder(TlsAcceptor::new(certs, key, &config.bind_address).await),
                 router,
                 config,
@@ -303,14 +396,16 @@ pub async fn auto_main(router: Router) {
                 .collect();
             let key = PrivateKey(certificate.private_key_to_der().unwrap());
 
-            write(cert_path, certificate.fullchain_to_pem().unwrap()).expect("Cert file should be writable");
-            write(key_path, certificate.private_key_to_pem().unwrap()).expect("Key file should be writable");
+            write(cert_path, certificate.fullchain_to_pem().unwrap())
+                .expect("Cert file should be writable");
+            write(key_path, certificate.private_key_to_pem().unwrap())
+                .expect("Key file should be writable");
 
             info!("Certificates successfully downloaded");
 
             let bind_address = config.bind_address.clone();
-            
-            async_run_router(
+
+            async_run_router::<P, _>(
                 axum::Server::builder(TlsAcceptor::new(certs, key, &bind_address).await),
                 router,
                 config,
@@ -324,9 +419,5 @@ pub async fn auto_main(router: Router) {
         }
     }
 
-    async_run_router(
-        axum::Server::bind(&config.bind_address),
-        router,
-        config,
-    ).await;
+    async_run_router::<P, _>(axum::Server::bind(&config.bind_address), router, config).await;
 }

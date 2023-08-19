@@ -1,6 +1,6 @@
 [package]
 name = "hypermangle-core"
-version = "0.4.6"
+version = "0.5.0"
 edition = "2021"
 description = "The core crate behind the hypermangle application"
 license = "MIT OR Apache-2.0"
@@ -24,12 +24,14 @@ notify = { version = "6.0.*", optional = true, default-features = false, feature
 
 parking_lot = { workspace = true }
 tokio = { workspace = true }
+interprocess = { version = "1.2.1", features = ["tokio_support"] }
 futures = "0.3.*"
 
 toml = { workspace = true }
 serde = { workspace = true}
+bincode = "1.3.*"
 
-hypermangle-py = "0.*"
+hypermangle-py = "0.2"
 
 lers = { version = "0.4.*", features = ["http-01"] }
 tokio-rustls = "0.24.*"
@@ -38,6 +40,7 @@ rustls-pemfile = "1.0.*"
 fern = "0.6.*"
 humantime = "2.1.*"
 log = { workspace = true }
+clap = { workspace = true }
 
 [features]
 hot-reload = ["notify"]
