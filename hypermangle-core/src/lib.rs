@@ -265,8 +265,10 @@ pub async fn auto_main(router: Router) {
                 panic!("Email not provided!");
             }
 
+            let mut bind_address = config.bind_address;
+            bind_address.set_port(80);
             let solver = Http01Solver::new();
-            let handle = unwrap!(solver.start(&config.bind_address));
+            let handle = unwrap!(solver.start(&bind_address));
 
             let directory = unwrap!(
                 lers::Directory::builder(URL)
@@ -307,6 +309,7 @@ pub async fn auto_main(router: Router) {
             info!("Certificates successfully downloaded");
 
             let bind_address = config.bind_address.clone();
+            
             async_run_router(
                 axum::Server::builder(TlsAcceptor::new(certs, key, &bind_address).await),
                 router,

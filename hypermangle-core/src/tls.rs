@@ -6,7 +6,7 @@ use std::{
 
 use futures::{stream::FuturesUnordered, StreamExt};
 use hyper::server::accept::Accept;
-use log::debug;
+use log::{debug, warn};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{
     rustls::{Certificate, ServerConfig},
@@ -25,6 +25,9 @@ impl TlsAcceptor {
         key: tokio_rustls::rustls::PrivateKey,
         bind_address: &SocketAddr,
     ) -> Self {
+        if bind_address.port() != 443 {
+            warn!("Warning! Serving HTTPS on non-traditional port");
+        }
         Self {
             acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(
                 ServerConfig::builder()
@@ -58,7 +61,7 @@ impl Accept for TlsAcceptor {
         let Poll::Ready(Some(result)) = self.accepting.poll_next_unpin(cx) else {
             return Poll::Pending;
         };
-        
+
         match result {
             Err(e) => {
                 debug!("client Error: {e:?}");
