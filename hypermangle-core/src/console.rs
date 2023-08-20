@@ -8,11 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use futures::AsyncWriteExt;
 
-
 pub struct RemoteClient {
-    stream: Option<LocalSocketStream>
+    stream: Option<LocalSocketStream>,
 }
-
 
 impl RemoteClient {
     pub async fn send(&mut self, msg: String) {
@@ -21,7 +19,6 @@ impl RemoteClient {
         }
     }
 }
-
 
 impl Drop for RemoteClient {
     fn drop(&mut self) {
@@ -34,13 +31,12 @@ impl Drop for RemoteClient {
     }
 }
 
-
 #[derive(Serialize, Deserialize)]
 enum BaseCommand {
     Id,
     Args(Vec<OsString>),
     Packet(String),
-    CloseSocket
+    CloseSocket,
 }
 
 fn get_socket_name() -> String {
@@ -88,17 +84,24 @@ pub async fn send_args_to_remote() {
 
     loop {
         let mut msg_size = [0u8; (usize::BITS / 8) as usize];
-        stream.read_exact(&mut msg_size).await.expect("Remote service should still be connected");
+        stream
+            .read_exact(&mut msg_size)
+            .await
+            .expect("Remote service should still be connected");
         let msg_size = usize::from_ne_bytes(msg_size);
         let mut msg = vec![0u8; msg_size];
-        stream.read_exact(&mut msg).await.expect("Remote service should still be connected");
+        stream
+            .read_exact(&mut msg)
+            .await
+            .expect("Remote service should still be connected");
 
-        let msg: BaseCommand = bincode::deserialize(&msg).expect("Remote service should have sent a valid message");
+        let msg: BaseCommand =
+            bincode::deserialize(&msg).expect("Remote service should have sent a valid message");
 
         match msg {
             BaseCommand::Packet(msg) => print!("{msg}"),
             BaseCommand::CloseSocket => break,
-            _ => { }
+            _ => {}
         }
     }
 }
@@ -109,7 +112,7 @@ pub trait ExecutableArgs: Parser {
 
 pub async fn listen_for_commands<P: ExecutableArgs>() {
     #[cfg(unix)]
-    let _  = std::fs::remove_file(get_socket_name());
+    let _ = std::fs::remove_file(get_socket_name());
 
     let listener = LocalSocketListener::bind(get_socket_name())
         .expect("Command listener should have started successfully");
@@ -156,12 +159,17 @@ pub async fn listen_for_commands<P: ExecutableArgs>() {
                         continue;
                     }
                 };
-                if args.execute(RemoteClient { stream: Some(stream) }).await {
-                    break
+                if args
+                    .execute(RemoteClient {
+                        stream: Some(stream),
+                    })
+                    .await
+                {
+                    break;
                 }
-                continue
+                continue;
             }
-            _ => { }
+            _ => {}
         }
 
         unwrap!(send_msg(BaseCommand::CloseSocket, &mut stream).await);

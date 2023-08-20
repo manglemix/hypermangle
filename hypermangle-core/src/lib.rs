@@ -27,10 +27,7 @@ use py::load_py_into_router;
 use pyo3_asyncio::TaskLocals;
 use regex::RegexSet;
 use serde::Deserialize;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    runtime::Handle,
-};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::rustls::{Certificate, PrivateKey};
 use tower::ServiceBuilder;
 use tower_http::{
@@ -59,7 +56,7 @@ pub fn load_scripts_into_router(router: Router, path: &Path) -> Router {
         #[cfg(feature = "hot-reload")]
         {
             use notify::Watcher;
-            let async_runtime = Handle::current();
+            let async_runtime = tokio::runtime::Handle::current();
             let working_dir = path.canonicalize().unwrap().parent().unwrap().to_owned();
             let mut watcher =
                 notify::recommended_watcher(move |res: Result<notify::Event, _>| match res {
@@ -106,7 +103,10 @@ pub fn load_scripts_into_router(router: Router, path: &Path) -> Router {
     }
 
     #[cfg(not(feature = "python"))]
-    router
+    {
+        let _path = path;
+        router
+    }
 }
 
 pub fn setup_logger(log_file_path: &str, log_level: &str) {
