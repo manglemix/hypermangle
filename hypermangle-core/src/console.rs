@@ -33,7 +33,8 @@ impl Drop for RemoteClient {
 
 #[derive(Serialize, Deserialize)]
 enum BaseCommand {
-    Id,
+    IdRequest,
+    IdResponse(u32),
     Args(Vec<OsString>),
     Packet(String),
     CloseSocket,
@@ -48,15 +49,11 @@ pub async fn does_remote_exist() -> Option<u32> {
     let Ok(mut stream) = LocalSocketStream::connect(get_socket_name()).await else {
         return None;
     };
-    send_msg(BaseCommand::Id, &mut stream)
-        .await
-        .expect("Remote Server should have responded with its Process ID");
-    let mut msg = [0u8; 4];
-    stream
-        .read_exact(&mut msg)
-        .await
-        .expect("Remote Server should have responded with its Process ID");
-    Some(u32::from_ne_bytes(msg))
+    send_msg(BaseCommand::IdRequest, &mut stream).await.ok()?;
+    let Ok(BaseCommand::IdResponse(id)) = recv_msg(&mut stream).await else {
+        panic!("Remote service should have responded with is Process ID")
+    };
+    Some(id)
 }
 
 async fn send_msg(msg: BaseCommand, stream: &mut LocalSocketStream) -> std::io::Result<()> {
@@ -67,6 +64,18 @@ async fn send_msg(msg: BaseCommand, stream: &mut LocalSocketStream) -> std::io::
     msg = tmp;
 
     stream.write_all(&msg).await
+}
+
+async fn recv_msg(
+    stream: &mut LocalSocketStream,
+) -> Result<BaseCommand, Box<dyn std::error::Error>> {
+    let mut msg_size = [0u8; (usize::BITS / 8) as usize];
+    stream.read_exact(&mut msg_size).await.map_err(Box::new)?;
+    let msg_size = usize::from_ne_bytes(msg_size);
+    let mut msg = vec![0u8; msg_size];
+    stream.read_exact(&mut msg).await.map_err(Box::new)?;
+
+    bincode::deserialize(&msg).map_err(Into::into)
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -83,20 +92,9 @@ pub async fn send_args_to_remote() {
     .expect("Remote service should have accepted the given arguments");
 
     loop {
-        let mut msg_size = [0u8; (usize::BITS / 8) as usize];
-        stream
-            .read_exact(&mut msg_size)
+        let msg = recv_msg(&mut stream)
             .await
-            .expect("Remote service should still be connected");
-        let msg_size = usize::from_ne_bytes(msg_size);
-        let mut msg = vec![0u8; msg_size];
-        stream
-            .read_exact(&mut msg)
-            .await
-            .expect("Remote service should still be connected");
-
-        let msg: BaseCommand =
-            bincode::deserialize(&msg).expect("Remote service should have sent a valid message");
+            .expect("Remote service should have sent a valid message");
 
         match msg {
             BaseCommand::Packet(msg) => print!("{msg}"),
@@ -116,6 +114,7 @@ pub async fn listen_for_commands<P: ExecutableArgs>() {
 
     let listener = LocalSocketListener::bind(get_socket_name())
         .expect("Command listener should have started successfully");
+
     loop {
         let mut stream = match listener.accept().await {
             Ok(x) => x,
@@ -131,30 +130,24 @@ pub async fn listen_for_commands<P: ExecutableArgs>() {
                     Ok(x) => x,
                     Err(e) => {
                         error!("Faced the following error while listening for commands: {e}");
-                        let _ = stream.write_all(e.to_string().as_bytes()).await;
+                        let _ = send_msg(BaseCommand::Packet(e.to_string()), &mut stream).await;
                         continue;
                     }
                 }
             };
         }
 
-        let mut msg_size = [0u8; (usize::BITS / 8) as usize];
-        unwrap!(stream.read_exact(&mut msg_size).await);
-        let msg_size = usize::from_ne_bytes(msg_size);
-        let mut msg = vec![0u8; msg_size];
-        unwrap!(stream.read_exact(&mut msg).await);
-
-        let msg: BaseCommand = unwrap!(bincode::deserialize(&msg));
+        let msg: BaseCommand = unwrap!(recv_msg(&mut stream).await);
 
         match msg {
-            BaseCommand::Id => {
-                unwrap!(stream.write_all(&std::process::id().to_ne_bytes()).await);
+            BaseCommand::IdRequest => {
+                unwrap!(send_msg(BaseCommand::IdResponse(std::process::id()), &mut stream).await);
             }
             BaseCommand::Args(args) => {
                 let args = match P::try_parse_from(args) {
                     Ok(x) => x,
                     Err(e) => {
-                        unwrap!(stream.write_all(e.to_string().as_bytes()).await);
+                        unwrap!(send_msg(BaseCommand::Packet(e.to_string()), &mut stream).await);
                         let _ = stream.close().await;
                         continue;
                     }
@@ -173,5 +166,7 @@ pub async fn listen_for_commands<P: ExecutableArgs>() {
         }
 
         unwrap!(send_msg(BaseCommand::CloseSocket, &mut stream).await);
+        #[cfg(unix)]
+        let _ = std::fs::remove_file(get_socket_name());
     }
 }
