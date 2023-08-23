@@ -41,7 +41,7 @@ enum BaseCommand {
 }
 
 fn get_socket_name() -> String {
-    format!("/tmp/{}.sock", crate_name!())
+    format!("/run/{}.sock", crate_name!())
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -109,8 +109,8 @@ pub trait ExecutableArgs: Parser {
 }
 
 pub async fn listen_for_commands<P: ExecutableArgs>() {
-    #[cfg(unix)]
-    let _ = std::fs::remove_file(get_socket_name());
+    // #[cfg(unix)]
+    // let _ = std::fs::remove_file(get_socket_name());
 
     let listener = LocalSocketListener::bind(get_socket_name())
         .expect("Command listener should have started successfully");
@@ -166,7 +166,7 @@ pub async fn listen_for_commands<P: ExecutableArgs>() {
         }
 
         unwrap!(send_msg(BaseCommand::CloseSocket, &mut stream).await);
-        #[cfg(unix)]
-        let _ = std::fs::remove_file(get_socket_name());
+        // #[cfg(unix)]
+        // let _ = std::fs::remove_file(get_socket_name());
     }
 }
