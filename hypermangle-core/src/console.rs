@@ -7,6 +7,7 @@ use log::error;
 use serde::{Deserialize, Serialize};
 
 use futures::AsyncWriteExt;
+use tokio::sync::mpsc;
 
 pub struct RemoteClient {
     stream: Option<LocalSocketStream>,
@@ -104,11 +105,21 @@ pub async fn send_args_to_remote() {
     }
 }
 
-pub trait ExecutableArgs: Parser {
-    async fn execute(self, writer: RemoteClient) -> bool;
+pub trait ExecutableArgs: Parser + Send + 'static {
+    fn execute(self, writer: RemoteClient) -> impl std::future::Future<Output=bool> + Send;
 }
 
-pub async fn listen_for_commands<P: ExecutableArgs>() {
+pub fn listen_for_commands<P: ExecutableArgs>() -> impl std::future::Future<Output=()> {
+    let (sender, receiver) = mpsc::channel(1);
+    tokio::spawn(listen_for_commands_inner::<P>(receiver));
+    async move {
+        let _sender = sender;
+        std::future::pending::<()>().await;
+    }
+}
+
+
+async fn listen_for_commands_inner<P: ExecutableArgs + Send>(mut receiver: mpsc::Receiver<()>) {
     #[cfg(unix)]
     let _ = std::fs::remove_file(get_socket_name());
 
@@ -116,13 +127,7 @@ pub async fn listen_for_commands<P: ExecutableArgs>() {
         .expect("Command listener should have started successfully");
 
     loop {
-        let mut stream = match listener.accept().await {
-            Ok(x) => x,
-            Err(e) => {
-                error!("Faced the following error while listening for commands: {e}");
-                continue;
-            }
-        };
+        let mut stream;
 
         macro_rules! unwrap {
             ($result: expr) => {
@@ -130,11 +135,20 @@ pub async fn listen_for_commands<P: ExecutableArgs>() {
                     Ok(x) => x,
                     Err(e) => {
                         error!("Faced the following error while listening for commands: {e}");
-                        let _ = send_msg(BaseCommand::Packet(e.to_string()), &mut stream).await;
+                        // let _ = send_msg(BaseCommand::Packet(e.to_string()), &mut stream).await;
                         continue;
                     }
                 }
             };
+        }
+
+        tokio::select! {
+            _ = receiver.recv() => {
+                break
+            }
+            result = listener.accept() => {
+                stream = unwrap!(result);
+            }
         }
 
         let msg: BaseCommand = unwrap!(recv_msg(&mut stream).await);
